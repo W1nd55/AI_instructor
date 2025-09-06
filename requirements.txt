@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+sqlalchemy==2.0.34
+passlib[bcrypt]==1.7.4
+PyJWT==2.9.0
+python-dotenv==1.0.1
+pydantic==2.8.2
+
+# OpenAI 官方 Python SDK（使用 Responses API）
+# 说明：固定到 1.x 稳定区间，并与 httpx 版本配套；若你明确知道更高版本已修复相关问题，可放宽上限
+openai>=1.97,<2.0
+
+# 与部分 openai 版本的兼容性：锁定 httpx 到 <0.28，避免 proxies 参数不兼容的问题
+httpx<0.28

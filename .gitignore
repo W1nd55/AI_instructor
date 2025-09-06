@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# venv
+venv/
+
+# OS
+.DS_Store
+
+# DB / local state
+app.db
+*.sqlite3
+
+# Secrets
+.env
+
+# Logs
+*.log
+EOF
+
+# CSV
+messages_flat.csv
