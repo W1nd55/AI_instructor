@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,12 +14,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
+# 如果你还在用 config.py 里的 SYSTEM_PROMPT，就保留这行；否则可以删掉：
+from config import SYSTEM_PROMPT  # , STUDY_SCHEMA  # parse 方案不再需要 STUDY_SCHEMA
+
 from passlib.context import CryptContext
 import jwt
 
 # ---- OpenAI SDK (Responses API) ----
-# Recommended: use Responses API; see openai/openai-python README (examples include output_text)
-# https://github.com/openai/openai-python
 from openai import OpenAI
 
 # --------- Load .env BEFORE any os.getenv ----------
@@ -30,8 +31,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
 SECRET_KEY = os.getenv("SECRET_KEY", "60a8016c-39bd-42d8-b76a-3ab80d88ddd6")
 JWT_ALG = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "168"))  # default: 7 days
-SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "./system_prompt.txt")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+
+# 建议使用 Structured Outputs 友好的快照；如果你已有其它模型名也可继续用
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-2024-08-06")
 
 # OpenAI API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -155,19 +157,16 @@ def get_current_user(
 
 # ---------- Schemas ----------
 class RegisterIn(BaseModel):
-    """Schema for register input"""
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=6, max_length=128)
 
 
 class LoginIn(BaseModel):
-    """Schema for login input"""
     username: str
     password: str
 
 
 class LoginOut(BaseModel):
-    """Schema for login output"""
     access_token: str
     token_type: str = "bearer"
     user_id: str
@@ -175,58 +174,50 @@ class LoginOut(BaseModel):
 
 
 class ChatSendIn(BaseModel):
-    """Schema for chat request input"""
     text: str = Field(min_length=1)
     conversation_id: Optional[str] = None
+    # 可选：前端传 true 启用 study 模式；不传则默认为 False
+    study: Optional[bool] = False
 
 
 class ChatSendOut(BaseModel):
-    """Schema for chat response output"""
     conversation_id: str
     reply: str
     created_at: datetime
 
 
 class MessageOut(BaseModel):
-    """Schema for returning message history"""
     role: str
     content: str
     created_at: datetime
 
 
+# ---------- Structured Output: Pydantic 模型（用于 responses.parse） ----------
+class StudyTurn(BaseModel):
+    step: Literal["diagnose", "ask", "hint", "explain", "checkpoint", "wrap_up"]
+    message: str
+    question: Optional[str] = None
+    expected_answer: Optional[str] = None
+    next_action: Optional[Literal["await_user", "ask_followup", "give_hint", "explain_more", "finish"]] = None
+
+
 # ---------- Utils ----------
-def read_system_prompt() -> str:
-    """Read system prompt text from file"""
-    try:
-        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return "You are a helpful assistant."  # fallback
-
-
 def build_input_messages(history: List[Message], new_user_text: str) -> list:
     """
     Convert message history + new user input into Responses API format.
-    Rules:
       - user -> content.type = "input_text"
       - assistant -> content.type = "output_text"
     """
     input_list = []
 
     for m in history:
-        role = m.role
-        if role not in ("user", "assistant"):
-            # Currently no 'system' stored; if added later, it can be passed to instructions.
-            # Here unknown roles are treated as assistant.
-            role = "assistant"
-
+        role = m.role if m.role in ("user", "assistant") else "assistant"
         content_type = "input_text" if role == "user" else "output_text"
         input_list.append({
             "role": role,
             "content": [{"type": content_type, "text": m.content}],
         })
 
-    # Append the latest user message
     input_list.append({
         "role": "user",
         "content": [{"type": "input_text", "text": new_user_text}],
@@ -235,16 +226,11 @@ def build_input_messages(history: List[Message], new_user_text: str) -> list:
 
 
 def extract_output_text(resp) -> str:
-    """
-    Extract output text from OpenAI Responses response.
-    Prefer resp.output_text (recommended).
-    Fallback: parse resp.output if output_text is empty or missing.
-    """
+    """General extractor for non-structured responses."""
     txt = getattr(resp, "output_text", None)
     if isinstance(txt, str) and txt.strip():
         return txt.strip()
 
-    # Fallback: try model_dump or model_dump_json
     data = None
     try:
         data = resp.model_dump()
@@ -265,11 +251,10 @@ def extract_output_text(resp) -> str:
                     parts.append(t)
             elif itype == "message":
                 for c in item.get("content", []):
-                    if isinstance(c, dict):
-                        if c.get("type") in ("output_text", "output_text.delta", "input_text"):
-                            t = c.get("text")
-                            if isinstance(t, str):
-                                parts.append(t)
+                    if isinstance(c, dict) and c.get("type") in ("output_text", "output_text.delta", "input_text"):
+                        t = c.get("text")
+                        if isinstance(t, str):
+                            parts.append(t)
     return "".join(parts).strip()
 
 
@@ -292,7 +277,6 @@ def ensure_conversation(db: Session, user: User, conv_id: Optional[str]) -> Conv
 # ---------- Routes ----------
 @app.post("/auth/register", response_model=LoginOut)
 def register(data: RegisterIn, db: Session = Depends(get_db)):
-    """Register new user"""
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
     user = User(username=data.username, password_hash=hash_password(data.password))
@@ -304,7 +288,6 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
 
 @app.post("/auth/login", response_model=LoginOut)
 def login(data: LoginIn, db: Session = Depends(get_db)):
-    """Login user and return access token"""
     user = db.query(User).filter(User.username == data.username).first()
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -322,10 +305,10 @@ def chat_send(
     # 1) Conversation
     conv = ensure_conversation(db, user, data.conversation_id)
 
-    # 2) System prompt
-    system_prompt = read_system_prompt()
+    # 2) System prompt（这里我直接用你在 config.py 里的 SYSTEM_PROMPT）
+    system_prompt = SYSTEM_PROMPT
 
-    # 3) History (can add max length control for tokens)
+    # 3) History
     history = db.query(Message).filter(
         Message.conversation_id == conv.id
     ).order_by(Message.id.asc()).all()
@@ -335,14 +318,45 @@ def chat_send(
 
     # 5) Call OpenAI Responses API
     try:
-        resp = oai_client.responses.create(
-            model=MODEL_NAME,
-            instructions=system_prompt,     # system prompt
-            input=input_msgs,               # multi-turn conversation
-        )
-        assistant_text = extract_output_text(resp)
-        if not assistant_text:
-            raise RuntimeError("Empty assistant output")
+        if data.study:
+            # --- Study 模式：用 responses.parse + Pydantic 模型，直接得到结构化对象 ---
+            resp = oai_client.responses.parse(
+                model=MODEL_NAME,
+                instructions=system_prompt,
+                input=input_msgs,
+                response_format=StudyTurn,  # 关键：让 SDK 按 Pydantic 模型解析
+            )
+
+            # 兼容不同 SDK 属性名：优先 output_parsed；兜底 parsed
+            study_obj = getattr(resp, "output_parsed", None) or getattr(resp, "parsed", None)
+            if study_obj is None:
+                # 万一解析失败，回退到纯文本
+                assistant_text = extract_output_text(resp)
+                if not assistant_text:
+                    raise RuntimeError("Empty assistant output")
+            else:
+                # study_obj 是 Pydantic 对象（或对象列表）；我们只用 message 字段显示到前端
+                if isinstance(study_obj, list):
+                    # 理论上每轮返回一个对象；若是列表，取第一项
+                    study_obj = study_obj[0] if study_obj else None
+                if study_obj is None:
+                    assistant_text = extract_output_text(resp) or ""
+                else:
+                    # 保存完整对象到 DB 也可以，这里仅取 message 展示
+                    assistant_text = getattr(study_obj, "message", "") or ""
+                    if not assistant_text:
+                        # 再保险一次
+                        assistant_text = extract_output_text(resp) or ""
+        else:
+            # --- 普通模式：自由文本 ---
+            resp = oai_client.responses.create(
+                model=MODEL_NAME,
+                instructions=system_prompt,
+                input=input_msgs,
+            )
+            assistant_text = extract_output_text(resp)
+            if not assistant_text:
+                raise RuntimeError("Empty assistant output")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
 
@@ -365,7 +379,6 @@ def chat_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Fetch chat history for a conversation"""
     conv = db.query(Conversation).filter(
         Conversation.id == conversation_id,
         Conversation.user_id == user.id
