@@ -1,19 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/**
- * Minimal React frontend for the FastAPI backend
- * Features:
- * - Register & Login (JWT)
- * - New chat / multi-turn conversation
- * - View chat history for a selected conversation
- * - Persist token and conversations in localStorage
- * - Configurable API base URL
- *
- * How to use quickly:
- * - In a Vite React project, replace App.jsx with this file's default export
- * - Or in your environment that supports this component, just render <App />
- */
-
 // ---- Config helpers ----
 const LS = {
   token: "aii.token",
@@ -21,6 +7,7 @@ const LS = {
   userId: "aii.userId",
   apiBase: "aii.apiBase",
   conversations: "aii.conversations", // [{id, title}]
+  useReference: "aii.useReference",
 };
 
 function getApiBase() {
@@ -239,12 +226,24 @@ function ChatView({ token, onLogout }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [useReference, setUseReference] = useState(() => {
+    try {
+      const v = localStorage.getItem(LS.useReference);
+      return v === null ? true : JSON.parse(v);
+    } catch {
+      return true;
+    }
+  });
   const abortRef = useRef(null);
   const scrollerRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(LS.conversations, JSON.stringify(conversations));
   }, [conversations]);
+
+  useEffect(() => {
+    localStorage.setItem(LS.useReference, JSON.stringify(useReference));
+  }, [useReference]);
 
   useEffect(() => {
     if (!activeId) return setMessages([]);
@@ -295,7 +294,9 @@ function ChatView({ token, onLogout }) {
     setInput("");
     setError("");
     setLoading(true);
-    const body = activeId ? { conversation_id: activeId, text } : { text };
+    const body = activeId
+      ? { conversation_id: activeId, text, use_reference: useReference }
+      : { text, use_reference: useReference };
 
     // optimistic append user message
     setMessages((prev) => [...prev, { role: "user", content: text, created_at: new Date().toISOString() }]);
@@ -306,11 +307,8 @@ function ChatView({ token, onLogout }) {
         token,
         body,
       });
-      // ensure conversation exists locally
       upsertConversationLocal(data.conversation_id, messages[0]?.content || text);
       if (!activeId) setActiveId(data.conversation_id);
-
-      // append assistant reply
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: data.reply, created_at: data.created_at },
@@ -335,7 +333,22 @@ function ChatView({ token, onLogout }) {
 
       <div className="flex-1 flex flex-col">
         <div className="h-14 border-b bg-white px-4 flex items-center justify-between">
-          <div className="font-semibold">{activeId ? `Conversation: ${activeId}` : "New Conversation"}</div>
+          <div className="flex items-center gap-3">
+            <div className="font-semibold">
+              {activeId ? `Conversation: ${activeId}` : "New Conversation"}
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="accent-indigo-600"
+                  checked={useReference}
+                  onChange={(e) => setUseReference(e.target.checked)}
+                />
+                <span className="text-slate-600">参考教材</span>
+              </label>
+            </div>
+          </div>
           <div className="text-xs text-slate-500">API: {getApiBase()}</div>
         </div>
 

@@ -31,6 +31,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
 SECRET_KEY = os.getenv("SECRET_KEY", "60a8016c-39bd-42d8-b76a-3ab80d88ddd6")
 JWT_ALG = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "168"))  # default: 7 days
+VECTOR_STORE_IDS = os.getenv("VECTOR_STORE_IDS", "").split(",")  # e.g. "vs_abc123,vs_def456"
 
 # 建议使用 Structured Outputs 友好的快照；如果你已有其它模型名也可继续用
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-2024-08-06")
@@ -178,6 +179,7 @@ class ChatSendIn(BaseModel):
     conversation_id: Optional[str] = None
     # 可选：前端传 true 启用 study 模式；不传则默认为 False
     study: Optional[bool] = False
+    use_reference: Optional[bool] = True  # 是否引入textbook
 
 
 class ChatSendOut(BaseModel):
@@ -294,7 +296,6 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     token = create_access_token(sub=user.id)
     return LoginOut(access_token=token, user_id=user.id, username=user.username)
 
-
 @app.post("/chat/send", response_model=ChatSendOut)
 def chat_send(
     data: ChatSendIn,
@@ -305,7 +306,7 @@ def chat_send(
     # 1) Conversation
     conv = ensure_conversation(db, user, data.conversation_id)
 
-    # 2) System prompt（这里我直接用你在 config.py 里的 SYSTEM_PROMPT）
+    # 2) System prompt
     system_prompt = SYSTEM_PROMPT
 
     # 3) History
@@ -316,47 +317,50 @@ def chat_send(
     # 4) Build Responses API input
     input_msgs = build_input_messages(history, data.text)
 
-    # 5) Call OpenAI Responses API
+    # 5) 参考教材：在 tools 里直接携带 vector_store_ids（不要 attachments / tool_resources）
+    vs_ids_env = [x.strip() for x in os.getenv("VECTOR_STORE_IDS", "").split(",") if x.strip()]
+    use_reference = bool(data.use_reference and vs_ids_env)
+
+    tools = None
+    if use_reference:
+        tools = [{
+            "type": "file_search",
+            "vector_store_ids": vs_ids_env,   # ← 关键：放在工具项里
+        }]
+
     try:
         if data.study:
-            # --- Study 模式：用 responses.parse + Pydantic 模型，直接得到结构化对象 ---
+            # 结构化输出
             resp = oai_client.responses.parse(
                 model=MODEL_NAME,
                 instructions=system_prompt,
                 input=input_msgs,
-                response_format=StudyTurn,  # 关键：让 SDK 按 Pydantic 模型解析
+                response_format=StudyTurn,
+                tools=tools,          # OK
+                # 不要传 tool_resources
             )
-
-            # 兼容不同 SDK 属性名：优先 output_parsed；兜底 parsed
+            # 解析
             study_obj = getattr(resp, "output_parsed", None) or getattr(resp, "parsed", None)
             if study_obj is None:
-                # 万一解析失败，回退到纯文本
                 assistant_text = extract_output_text(resp)
                 if not assistant_text:
                     raise RuntimeError("Empty assistant output")
             else:
-                # study_obj 是 Pydantic 对象（或对象列表）；我们只用 message 字段显示到前端
                 if isinstance(study_obj, list):
-                    # 理论上每轮返回一个对象；若是列表，取第一项
                     study_obj = study_obj[0] if study_obj else None
-                if study_obj is None:
-                    assistant_text = extract_output_text(resp) or ""
-                else:
-                    # 保存完整对象到 DB 也可以，这里仅取 message 展示
-                    assistant_text = getattr(study_obj, "message", "") or ""
-                    if not assistant_text:
-                        # 再保险一次
-                        assistant_text = extract_output_text(resp) or ""
+                assistant_text = getattr(study_obj, "message", "") or extract_output_text(resp) or ""
         else:
-            # --- 普通模式：自由文本 ---
+            # 普通自由文本
             resp = oai_client.responses.create(
                 model=MODEL_NAME,
                 instructions=system_prompt,
                 input=input_msgs,
+                tools=tools,          # OK
             )
             assistant_text = extract_output_text(resp)
             if not assistant_text:
                 raise RuntimeError("Empty assistant output")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
 
@@ -371,7 +375,6 @@ def chat_send(
     db.commit()
 
     return ChatSendOut(conversation_id=conv.id, reply=assistant_text, created_at=datetime.utcnow())
-
 
 @app.get("/chat/history", response_model=List[MessageOut])
 def chat_history(
