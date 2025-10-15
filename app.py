@@ -82,6 +82,8 @@ class Conversation(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String, nullable=True)
+    student_name = Column(String, nullable=True)
+    student_id = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -180,6 +182,8 @@ class ChatSendIn(BaseModel):
     # 可选：前端传 true 启用 study 模式；不传则默认为 False
     study: Optional[bool] = False
     use_reference: Optional[bool] = True  # 是否引入textbook
+    student_name: Optional[str] = None
+    student_id: Optional[str] = None
 
 
 class ChatSendOut(BaseModel):
@@ -192,6 +196,12 @@ class MessageOut(BaseModel):
     role: str
     content: str
     created_at: datetime
+
+
+class ChatHistoryOut(BaseModel):
+    student_name: Optional[str] = None
+    student_id: Optional[str] = None
+    messages: List[MessageOut]
 
 
 # ---------- Structured Output: Pydantic 模型（用于 responses.parse） ----------
@@ -260,7 +270,13 @@ def extract_output_text(resp) -> str:
     return "".join(parts).strip()
 
 
-def ensure_conversation(db: Session, user: User, conv_id: Optional[str]) -> Conversation:
+def ensure_conversation(
+    db: Session, 
+    user: User, 
+    conv_id: Optional[str],
+    student_name: Optional[str] = None,
+    student_id: Optional[str] = None
+) -> Conversation:
     """Fetch existing conversation or create a new one"""
     if conv_id:
         conv = db.query(Conversation).filter(
@@ -270,7 +286,13 @@ def ensure_conversation(db: Session, user: User, conv_id: Optional[str]) -> Conv
         if not conv:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conv
-    conv = Conversation(user_id=user.id, title=None)
+    
+    conv = Conversation(
+        user_id=user.id, 
+        title=None,
+        student_name=student_name,
+        student_id=student_id
+    )
     db.add(conv)
     db.flush()
     return conv
@@ -303,8 +325,13 @@ def chat_send(
     db: Session = Depends(get_db),
 ):
     """Send user message and get assistant reply"""
-    # 1) Conversation
-    conv = ensure_conversation(db, user, data.conversation_id)
+    conv = ensure_conversation(
+        db, 
+        user, 
+        data.conversation_id,
+        student_name=data.student_name,
+        student_id=data.student_id
+    )
 
     # 2) System prompt
     system_prompt = SYSTEM_PROMPT
@@ -392,3 +419,27 @@ def chat_history(
         Message.conversation_id == conversation_id
     ).order_by(Message.id.asc()).all()
     return [MessageOut(role=r.role, content=r.content, created_at=r.created_at) for r in rows]
+
+@app.get("/chat/history/detailed", response_model=ChatHistoryOut)
+def chat_history_detailed(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get conversation history with student information"""
+    conv = db.query(Conversation).filter(
+        Conversation.id == conversation_id,
+        Conversation.user_id == user.id
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    rows = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(Message.id.asc()).all()
+    
+    return ChatHistoryOut(
+        student_name=conv.student_name,
+        student_id=conv.student_id,
+        messages=[MessageOut(role=r.role, content=r.content, created_at=r.created_at) for r in rows]
+    )
