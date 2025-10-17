@@ -189,12 +189,13 @@ sqlite3 app.db "PRAGMA table_info(messages)"
 # Flattened message export (includes username & conversation_id)
 sqlite3 -header -csv app.db "
 SELECT
-  c.id        AS conversation_id,
-  u.username  AS username,
-  m.id        AS message_id,
-  m.role      AS role,
-  m.content   AS content,
-  m.created_at
+  c.id               AS conversation_id,
+  c.student_name     AS student_name,
+  c.student_id       AS student_id,
+  m.id               AS message_id,
+  m.role             AS role,
+  m.content          AS content,
+  m.created_at       AS created_at
 FROM messages m
 JOIN conversations c ON m.conversation_id = c.id
 JOIN users u ON c.user_id = u.id

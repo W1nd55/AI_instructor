@@ -223,12 +223,13 @@ export default function ConversationPage({ token, onLogout }) {
     setError("");
     setLoading(true);
     const body = activeId
-      ? { conversation_id: activeId, text, use_reference: useReference }
+      ? { conversation_id: activeId, text, use_reference: useReference, study: true}
       : {
         text,
         use_reference: useReference,
         student_name: info?.name,
         student_id: info?.studentId,
+        study: true
       };
 
     setMessages((prev) => [...prev, { role: "user", content: text, created_at: new Date().toISOString() }]);
@@ -344,7 +345,7 @@ export default function ConversationPage({ token, onLogout }) {
                 checked={useReference}
                 onChange={(e) => setUseReference(e.target.checked)}
               />
-              <span className="text-sm text-slate-700">参考教材</span>
+              <span className="text-sm text-slate-700">Use textbook</span>
             </label>
           </div>
           <div className="flex items-center gap-3">

@@ -348,13 +348,13 @@ def chat_send(
     vs_ids_env = [x.strip() for x in os.getenv("VECTOR_STORE_IDS", "").split(",") if x.strip()]
     use_reference = bool(data.use_reference and vs_ids_env)
 
-    tools = None
+    tools = []
+    
     if use_reference:
         tools = [{
             "type": "file_search",
             "vector_store_ids": vs_ids_env,   # ← 关键：放在工具项里
         }]
-
     try:
         if data.study:
             # 结构化输出
@@ -362,7 +362,7 @@ def chat_send(
                 model=MODEL_NAME,
                 instructions=system_prompt,
                 input=input_msgs,
-                response_format=StudyTurn,
+                text_format=StudyTurn,
                 tools=tools,          # OK
                 # 不要传 tool_resources
             )
@@ -377,6 +377,7 @@ def chat_send(
                     study_obj = study_obj[0] if study_obj else None
                 assistant_text = getattr(study_obj, "message", "") or extract_output_text(resp) or ""
         else:
+            system_prompt = "You are a helpful assistant."
             # 普通自由文本
             resp = oai_client.responses.create(
                 model=MODEL_NAME,
