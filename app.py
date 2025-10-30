@@ -14,11 +14,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
-# 如果你还在用 config.py 里的 SYSTEM_PROMPT，就保留这行；否则可以删掉：
 from config import SYSTEM_PROMPT  # , STUDY_SCHEMA  # parse 方案不再需要 STUDY_SCHEMA
 
 from passlib.context import CryptContext
 import jwt
+from tools.utils import strip_links
 
 # ---- OpenAI SDK (Responses API) ----
 from openai import OpenAI
@@ -28,7 +28,7 @@ load_dotenv(dotenv_path=".env", override=False)
 
 # ---------- Config ----------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "60a8016c-39bd-42d8-b76a-3ab80d88ddd6")
+SECRET_KEY = os.getenv("SECRET_KEY", "")
 JWT_ALG = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "168"))  # default: 7 days
 VECTOR_STORE_IDS = os.getenv("VECTOR_STORE_IDS", "").split(",")  # e.g. "vs_abc123,vs_def456"
@@ -391,6 +391,9 @@ def chat_send(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
+    
+    # 统一过滤链接
+    assistant_text = strip_links(assistant_text)
 
     # 6) Save messages into DB
     if not data.conversation_id:

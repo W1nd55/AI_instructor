@@ -1,9 +1,15 @@
 import React from "react";
 import { classNames, fmtTime } from "./App";
 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
+
 export default function MessageBubble({ role, content, created_at }) {
   const isUser = role === "user";
-  
+
   return (
     <div className={classNames("flex mb-6", isUser ? "justify-end" : "justify-start")}>
       <div className="flex items-start max-w-full gap-3">
@@ -24,15 +30,26 @@ export default function MessageBubble({ role, content, created_at }) {
                 : "bg-white text-slate-800 border-2 border-slate-200 rounded-bl-sm"
             )}
           >
-            <div className="whitespace-pre-wrap text-lg leading-relaxed">
-              {content}
+            <div className={classNames(
+              "prose max-w-none",
+              isUser ? "prose-invert" : "prose-slate"
+            )}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex, rehypeHighlight]}
+              >
+                {content || ""}
+              </ReactMarkdown>
             </div>
           </div>
+
           {created_at && (
-            <div className={classNames(
-              "mt-1 text-xs px-2",
-              isUser ? "text-right text-slate-500" : "text-left text-slate-400"
-            )}>
+            <div
+              className={classNames(
+                "mt-1 text-xs px-2",
+                isUser ? "text-right text-slate-500" : "text-left text-slate-400"
+              )}
+            >
               {fmtTime(created_at)}
             </div>
           )}
