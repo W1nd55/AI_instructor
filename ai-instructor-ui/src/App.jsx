@@ -1,6 +1,9 @@
+import 'katex/dist/katex.min.css'
+import 'highlight.js/styles/github.css'
 import React, { useState } from "react";
 import AuthPage from "./AuthPage";
 import ConversationPage from "./ConversationPage";
+
 
 // ---- Constants ----
 export const LS = {

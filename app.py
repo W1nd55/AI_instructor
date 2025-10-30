@@ -238,20 +238,15 @@ def build_input_messages(history: List[Message], new_user_text: str) -> list:
 
 
 def extract_output_text(resp) -> str:
-    """General extractor for non-structured responses."""
     txt = getattr(resp, "output_text", None)
     if isinstance(txt, str) and txt.strip():
         return txt.strip()
 
     data = None
     try:
-        data = resp.model_dump()
+        data = resp.model_dump()   # 只用这个
     except Exception:
-        try:
-            import json
-            data = json.loads(resp.model_dump_json())
-        except Exception:
-            pass
+        return ""                  # 直接返回空或按需处理
 
     parts: List[str] = []
     if isinstance(data, dict):
@@ -299,6 +294,14 @@ def ensure_conversation(
 
 
 # ---------- Routes ----------
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "AI Instructor API is running"}
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
 @app.post("/auth/register", response_model=LoginOut)
 def register(data: RegisterIn, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == data.username).first():
@@ -366,6 +369,7 @@ def chat_send(
                 tools=tools,          # OK
                 # 不要传 tool_resources
             )
+            print("DEBUG assistant_text repr >>>", resp)
             # 解析
             study_obj = getattr(resp, "output_parsed", None) or getattr(resp, "parsed", None)
             if study_obj is None:
@@ -392,7 +396,6 @@ def chat_send(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
     
-    # 统一过滤链接
     assistant_text = strip_links(assistant_text)
 
     # 6) Save messages into DB

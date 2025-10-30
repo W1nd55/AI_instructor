@@ -6,7 +6,6 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
-
 export default function MessageBubble({ role, content, created_at }) {
   const isUser = role === "user";
 
@@ -24,19 +23,22 @@ export default function MessageBubble({ role, content, created_at }) {
         <div className="flex-1">
           <div
             className={classNames(
-              "rounded-2xl px-6 py-4 shadow-md",
+              "rounded-2xl px-6 py-4 shadow-md overflow-x-auto",
               isUser
                 ? "bg-indigo-600 text-white rounded-br-sm"
                 : "bg-white text-slate-800 border-2 border-slate-200 rounded-bl-sm"
             )}
           >
-            <div className={classNames(
-              "prose max-w-none",
-              isUser ? "prose-invert" : "prose-slate"
-            )}>
+            <div className={classNames("prose max-w-none", isUser ? "prose-invert" : "prose-slate")}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex, rehypeHighlight]}
+                // 先解析数学，再做 GFM
+                remarkPlugins={[remarkMath, remarkGfm]}
+                rehypePlugins={[
+                  [rehypeKatex, { throwOnError: false, strict: false }],
+                  rehypeHighlight
+                ]}
+                // 链接新窗口打开（可选）
+                linkTarget="_blank"
               >
                 {content || ""}
               </ReactMarkdown>
@@ -44,12 +46,7 @@ export default function MessageBubble({ role, content, created_at }) {
           </div>
 
           {created_at && (
-            <div
-              className={classNames(
-                "mt-1 text-xs px-2",
-                isUser ? "text-right text-slate-500" : "text-left text-slate-400"
-              )}
-            >
+            <div className={classNames("mt-1 text-xs px-2", isUser ? "text-right text-slate-500" : "text-left text-slate-400")}>
               {fmtTime(created_at)}
             </div>
           )}
