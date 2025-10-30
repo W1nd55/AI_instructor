@@ -27,3 +27,4 @@ messages_flat.csv
 # JS
 ai-instructor-ui/node_modules
 ai-instructor-ui/package-lock.json
+node_modules/
