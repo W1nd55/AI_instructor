@@ -175,6 +175,7 @@ export default function ConversationPage({ token, onLogout }) {
   function handleStudentInfoSubmit(info) {
     setStudentInfo(info);
     setShowStudentModal(false);
+    setShowWelcome(false);
 
     if (pendingMessage) {
       sendMessageWithStudentInfo(pendingMessage, info);
