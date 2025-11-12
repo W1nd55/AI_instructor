@@ -38,7 +38,7 @@ export default function MessageBubble({ role, content, created_at }) {
                   rehypeHighlight
                 ]}
                 // 链接新窗口打开（可选）
-                linkTarget="_blank"
+                // linkTarget="_blank"
               >
                 {content || ""}
               </ReactMarkdown>
